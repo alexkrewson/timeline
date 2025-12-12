@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Infinite Timeline – Pan + Zoom</title>
+  <style>
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0d0d0d; }
+    canvas { display:block; cursor:grab; }
+    canvas:active { cursor:grabbing; }
+  </style>
+</head>
+<body>
+<canvas></canvas>
+
+<script>
+  const canvas = document.querySelector('canvas');
+  const ctx = canvas.getContext('2d');
+
+  let offsetX = 0;
+  let zoom = 1;                    // 1 = normal, 2 = 2× zoomed in, 0.5 = half, etc.
+  let isDragging = false;
+  let startX = 0;
+
+  const resize = () => {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    draw();
+  };
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ─────── PANNING (same as before) ───────
+  canvas.onmousedown = e => {
+    if (e.button !== 0) return;
+    isDragging = true;
+    startX = e.clientX - offsetX;
+    e.preventDefault();
+  };
+
+  canvas.onmousemove = e => {
+    if (isDragging) {
+      offsetX = e.clientX - startX;
+      draw();
+    }
+  };
+
+  canvas.onmouseup = canvas.onmouseleave = () => isDragging = false;
+  canvas.oncontextmenu = e => e.preventDefault();
+
+  // ─────── ZOOM with Ctrl + Wheel ───────
+  canvas.addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;           // only when Ctrl is held
+    e.preventDefault();
+
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.111;   // smooth feel
+    const oldZoom = zoom;
+    zoom *= zoomFactor;
+
+    // Zoom toward mouse position (feels natural)
+    const mouseX = e.clientX;
+    offsetX = mouseX - (mouseX - offsetX) * (zoom / oldZoom);
+
+    draw();
+  });
+
+  function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    const barH = 80;
+    const barY = canvas.height/2 - barH/2;
+
+    ctx.save();
+    ctx.translate(offsetX, 0);
+    ctx.scale(zoom, 1);                // horizontal zoom only
+
+    // Infinite bar
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(-10000000, barY, 20000000, barH);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(-10000000, barY, 20000000, barH);
+
+    // Big obvious text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 32px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('◄ LEFT — DRAG ME — RIGHT ►', 0, canvas.height/2);
+
+    ctx.restore();
+
+    // Fixed red center line
+    ctx.strokeStyle = '#ff4444';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([12,12]);
+    ctx.beginPath();
+    ctx.moveTo(canvas.width/2, barY);
+    ctx.lineTo(canvas.width/2, barY + barH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  draw();
+</script>
+</body>
+</html>
