@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Infinite Timeline – Pan + Zoom</title>
+  <title>Infinite Timeline</title>
   <style>
     html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0d0d0d; }
     canvas { display:block; cursor:grab; }
@@ -17,91 +17,208 @@
   const canvas = document.querySelector('canvas');
   const ctx = canvas.getContext('2d');
 
-  let offsetX = 0;
-  let zoom = 1;                    // 1 = normal, 2 = 2× zoomed in, 0.5 = half, etc.
+  const BIG_BANG = -13.8e9;
+  const NOW = 0;  // 2025
+  let viewCenter;
+  let scale;  // pixels per year
   let isDragging = false;
   let startX = 0;
+  let startViewCenter = 0;
+  let initial = true;
+  let needsRedraw = false;
 
   const resize = () => {
-    canvas.width  = window.innerWidth;
+    canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    draw();
+    if (initial) {
+      viewCenter = (BIG_BANG + NOW) / 2;
+      scale = canvas.width / (NOW - BIG_BANG);
+      initial = false;
+    }
+    clampView();
+    requestRedraw();
   };
   window.addEventListener('resize', resize);
   resize();
 
-  // ─────── PANNING (same as before) ───────
+  // Panning
   canvas.onmousedown = e => {
     if (e.button !== 0) return;
     isDragging = true;
-    startX = e.clientX - offsetX;
+    startX = e.clientX;
+    startViewCenter = viewCenter;
     e.preventDefault();
   };
 
   canvas.onmousemove = e => {
     if (isDragging) {
-      offsetX = e.clientX - startX;
-      draw();
+      const delta = e.clientX - startX;
+      viewCenter = startViewCenter - delta / scale;
+      clampView();
+      requestRedraw();
     }
   };
 
   canvas.onmouseup = canvas.onmouseleave = () => isDragging = false;
   canvas.oncontextmenu = e => e.preventDefault();
 
-  // ─────── ZOOM with Ctrl + Wheel ───────
+  // Wheel: Ctrl+wheel = zoom; wheel alone = pan
   canvas.addEventListener('wheel', e => {
-    if (!e.ctrlKey) return;           // only when Ctrl is held
     e.preventDefault();
+    e.stopPropagation();
 
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.111;   // smooth feel
-    const oldZoom = zoom;
-    zoom *= zoomFactor;
+    if (e.ctrlKey) {
+      // Zoom
+      const delta = e.deltaY;
+      const exp = Math.abs(delta) / 100;
+      const baseFactor = Math.pow(1.1, exp);
+      const zoomFactor = delta > 0 ? 1 / baseFactor : baseFactor;
 
-    // Zoom toward mouse position (feels natural)
-    const mouseX = e.clientX;
-    offsetX = mouseX - (mouseX - offsetX) * (zoom / oldZoom);
+      const oldScale = scale;
+      scale *= zoomFactor;
 
-    draw();
+      const mouseX = e.clientX;
+      const mouseWorld = viewCenter + (mouseX - canvas.width / 2) / oldScale;
+      viewCenter = mouseWorld - (mouseX - canvas.width / 2) / scale;
+    } else {
+      // Pan: scroll up = forward (right), down = backward (left)
+      const panDelta = e.deltaY * -0.3;  // adjust speed
+      viewCenter += panDelta / scale;
+    }
+
+    clampView();
+    requestRedraw();
+  }, { passive: false });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey) {
+      if (e.key === 'End') {
+        e.preventDefault();
+        const daysSpan = 30;
+        const yearsSpan = daysSpan / 365.25;
+        scale = canvas.width / yearsSpan;
+        viewCenter = NOW - (canvas.width / 2) / scale;
+        requestRedraw();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        const fullRange = -BIG_BANG;
+        scale = canvas.width / fullRange;
+        viewCenter = NOW - (canvas.width / 2) / scale;
+        requestRedraw();
+      }
+    }
   });
 
-  function draw() {
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+  function clampView() {
+    const fullRange = -BIG_BANG;
+    const minScale = canvas.width / fullRange;
 
-    const barH = 80;
-    const barY = canvas.height/2 - barH/2;
+    // Max scale: screen spans ~30 days (finest ticks ~days)
+    const daysSpan = 30;
+    const yearsSpan = daysSpan / 365.25;
+    const maxScale = canvas.width / yearsSpan;
 
-    ctx.save();
-    ctx.translate(offsetX, 0);
-    ctx.scale(zoom, 1);                // horizontal zoom only
+    scale = Math.max(minScale, Math.min(maxScale, scale));
 
-    // Infinite bar
-    ctx.fillStyle = '#333333';
-    ctx.fillRect(-10000000, barY, 20000000, barH);
-    ctx.strokeStyle = '#555';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(-10000000, barY, 20000000, barH);
-
-    // Big obvious text
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 32px system-ui';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('◄ LEFT — DRAG ME — RIGHT ►', 0, canvas.height/2);
-
-    ctx.restore();
-
-    // Fixed red center line
-    ctx.strokeStyle = '#ff4444';
-    ctx.lineWidth = 4;
-    ctx.setLineDash([12,12]);
-    ctx.beginPath();
-    ctx.moveTo(canvas.width/2, barY);
-    ctx.lineTo(canvas.width/2, barY + barH);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    const halfWidth = canvas.width / 2 / scale;
+    if (viewCenter - halfWidth < BIG_BANG) {
+      viewCenter = BIG_BANG + halfWidth;
+    }
+    if (viewCenter + halfWidth > NOW) {
+      viewCenter = NOW - halfWidth;
+    }
   }
 
-  draw();
+  function formatTime(t) {
+    if (t === 0) return '2025';
+    const absT = Math.abs(t);
+    const sign = t > 0 ? '+' : '';
+    const ago = t < 0 ? ' ago' : '';
+
+    const secPerYear = 3.15576e7;
+    const absSec = absT * secPerYear;
+
+    if (absT >= 1e9) return sign + (absT / 1e9).toFixed(1) + ' By' + ago;
+    if (absT >= 1e6) return sign + (absT / 1e6).toFixed(0) + ' My' + ago;
+    if (absT >= 1e3) return sign + (absT / 1e3).toFixed(0) + ' ky' + ago;
+    if (absT >= 1) return sign + absT.toFixed(0) + ' y' + ago;
+    return sign + Math.floor(absSec / 86400) + ' d' + ago;  // stop at days
+  }
+
+  function niceStep(target) {
+    if (target === 0) return 1;
+    const exp = Math.floor(Math.log10(target));
+    const frac = target / Math.pow(10, exp);
+    let step;
+    if (frac < 1.5) step = 1;
+    else if (frac < 3) step = 2;
+    else if (frac < 7) step = 5;
+    else step = 10;
+    return step * Math.pow(10, exp);
+  }
+
+  function requestRedraw() {
+    if (!needsRedraw) {
+      needsRedraw = true;
+      requestAnimationFrame(draw);
+    }
+  }
+
+  function draw() {
+    needsRedraw = false;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const barHeight = 60;
+    const barY = canvas.height / 2 - barHeight / 2;
+
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(0, barY, canvas.width, barHeight);
+    ctx.strokeStyle = '#444444';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, barY, canvas.width, barHeight);
+
+    const yearsPerPixel = 1 / scale;
+    const leftTime = viewCenter - (canvas.width / 2) / scale;
+    const rightTime = viewCenter + (canvas.width / 2) / scale;
+
+    let timeStep = niceStep(yearsPerPixel * 80);
+
+    // Force 1-day steps at finest zoom (when timeStep is small)
+    if (timeStep < 1) timeStep = 1 / 365.25;  // exactly 1 day in years
+
+    const isDense = timeStep < 1;
+
+    let startT = Math.ceil(leftTime / timeStep) * timeStep;
+
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    let stagger = 0;
+
+    for (let t = startT; t <= rightTime; t += timeStep) {
+      const screenX = canvas.width / 2 + (t - viewCenter) * scale;
+
+      // Black tick
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(screenX, barY);
+      ctx.lineTo(screenX, barY + barHeight);
+      ctx.stroke();
+
+      // Label
+      ctx.save();
+      ctx.translate(screenX, barY - 10 - stagger * 15);
+      if (isDense) ctx.rotate(-Math.PI / 4);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(formatTime(t), 0, 0);
+      ctx.restore();
+
+      stagger = (stagger + 1) % 2;
+    }
+  }
+
 </script>
 </body>
 </html>
