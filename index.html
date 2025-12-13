@@ -18,7 +18,8 @@
   const ctx = canvas.getContext('2d');
 
   const BIG_BANG = -13.8e9;
-  const NOW = 0;  // 2025
+  const NOW_YEAR = 2025;
+  const NOW = 0;  // years from now
   let viewCenter;
   let scale;  // pixels per year
   let isDragging = false;
@@ -95,9 +96,7 @@
     if (e.ctrlKey) {
       if (e.key === 'End') {
         e.preventDefault();
-        const daysSpan = 30;
-        const yearsSpan = daysSpan / 365.25;
-        scale = canvas.width / yearsSpan;
+        scale = canvas.width / 10;  // screen spans 10 years at max zoom
         viewCenter = NOW - (canvas.width / 2) / scale;
         requestRedraw();
       } else if (e.key === 'Home') {
@@ -114,10 +113,8 @@
     const fullRange = -BIG_BANG;
     const minScale = canvas.width / fullRange;
 
-    // Max scale: screen spans ~30 days (finest ticks ~days)
-    const daysSpan = 30;
-    const yearsSpan = daysSpan / 365.25;
-    const maxScale = canvas.width / yearsSpan;
+    // Max scale: screen spans 10 years (ticks every 1 year ~ width/10 px)
+    const maxScale = canvas.width / 10;
 
     scale = Math.max(minScale, Math.min(maxScale, scale));
 
@@ -131,19 +128,11 @@
   }
 
   function formatTime(t) {
-    if (t === 0) return '2025';
-    const absT = Math.abs(t);
-    const sign = t > 0 ? '+' : '';
-    const ago = t < 0 ? ' ago' : '';
-
-    const secPerYear = 3.15576e7;
-    const absSec = absT * secPerYear;
-
-    if (absT >= 1e9) return sign + (absT / 1e9).toFixed(1) + ' By' + ago;
-    if (absT >= 1e6) return sign + (absT / 1e6).toFixed(0) + ' My' + ago;
-    if (absT >= 1e3) return sign + (absT / 1e3).toFixed(0) + ' ky' + ago;
-    if (absT >= 1) return sign + absT.toFixed(0) + ' y' + ago;
-    return sign + Math.floor(absSec / 86400) + ' d' + ago;  // stop at days
+    const year = Math.floor(NOW_YEAR + t);
+    if (Math.abs(t) >= 1e9) return (Math.abs(t) / 1e9).toFixed(1) + ' Bya';
+    if (Math.abs(t) >= 1e6) return (Math.abs(t) / 1e6).toFixed(0) + ' Mya';
+    if (Math.abs(t) >= 1e3) return (Math.abs(t) / 1e3).toFixed(0) + ' kya';
+    return year > 0 ? year + ' AD' : (1 - year) + ' BCE';
   }
 
   function niceStep(target) {
@@ -184,10 +173,10 @@
 
     let timeStep = niceStep(yearsPerPixel * 80);
 
-    // Force 1-day steps at finest zoom (when timeStep is small)
-    if (timeStep < 1) timeStep = 1 / 365.25;  // exactly 1 day in years
+    // Force min timeStep = 1 (no sub-year at finest)
+    if (timeStep < 1) timeStep = 1;
 
-    const isDense = timeStep < 1;
+    const isDense = timeStep < 10;  // rotate if dense (small steps)
 
     let startT = Math.ceil(leftTime / timeStep) * timeStep;
 
@@ -195,6 +184,7 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     let stagger = 0;
+    let lastScreenX = -Infinity;
 
     for (let t = startT; t <= rightTime; t += timeStep) {
       const screenX = canvas.width / 2 + (t - viewCenter) * scale;
@@ -207,15 +197,17 @@
       ctx.lineTo(screenX, barY + barHeight);
       ctx.stroke();
 
-      // Label
-      ctx.save();
-      ctx.translate(screenX, barY - 10 - stagger * 15);
-      if (isDense) ctx.rotate(-Math.PI / 4);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(formatTime(t), 0, 0);
-      ctx.restore();
-
-      stagger = (stagger + 1) % 2;
+      // Label only if enough space (min 60px)
+      if (screenX - lastScreenX >= 60) {
+        ctx.save();
+        ctx.translate(screenX, barY - 10 - stagger * 15);
+        if (isDense) ctx.rotate(-Math.PI / 4);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(formatTime(t), 0, 0);
+        ctx.restore();
+        lastScreenX = screenX;
+        stagger = (stagger + 1) % 2;
+      }
     }
   }
 
